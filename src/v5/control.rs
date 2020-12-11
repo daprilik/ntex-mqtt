@@ -130,7 +130,10 @@ impl Subscribe {
     #[inline]
     /// returns iterator over subscription topics
     pub fn iter_mut(&mut self) -> SubscribeIter<'_> {
-        SubscribeIter { subs: self as *const _ as *mut _, entry: 0, lt: PhantomData }
+        SubscribeIter {
+            topic_filters: Some(&self.packet.topic_filters),
+            status: Some(&mut self.result.status),
+        }
     }
 
     #[inline]
@@ -154,27 +157,8 @@ impl<'a> IntoIterator for &'a mut Subscribe {
 
 /// Iterator over subscription topics
 pub struct SubscribeIter<'a> {
-    subs: *mut Subscribe,
-    entry: usize,
-    lt: PhantomData<&'a mut Subscribe>,
-}
-
-impl<'a> SubscribeIter<'a> {
-    fn next_unsafe(&mut self) -> Option<Subscription<'a>> {
-        let subs = unsafe { &mut *self.subs };
-
-        if self.entry < subs.packet.topic_filters.len() {
-            let s = Subscription {
-                topic: &subs.packet.topic_filters[self.entry].0,
-                options: &subs.packet.topic_filters[self.entry].1,
-                status: &mut subs.result.status[self.entry],
-            };
-            self.entry += 1;
-            Some(s)
-        } else {
-            None
-        }
-    }
+    topic_filters: Option<&'a [(ByteString, codec::SubscriptionOptions)]>,
+    status: Option<&'a mut [codec::SubscribeAckReason]>,
 }
 
 impl<'a> Iterator for SubscribeIter<'a> {
@@ -182,7 +166,19 @@ impl<'a> Iterator for SubscribeIter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Subscription<'a>> {
-        self.next_unsafe()
+        let (head, tail) = self.status.take()?.split_first_mut()?;
+        self.status = Some(tail);
+        let status = Some(head);
+
+        let (head, tail) = self.topic_filters.take()?.split_first()?;
+        self.topic_filters = Some(tail);
+        let topic_filter = Some(head);
+
+        Some(Subscription {
+            topic: &topic_filter?.0,
+            options: &topic_filter?.1,
+            status: status?,
+        })
     }
 }
 
